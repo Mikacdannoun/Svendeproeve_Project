@@ -18,3 +18,4 @@ prisma/ -> Prisma schema + migrations
 
 ## Setup
 More documentation to come
+
