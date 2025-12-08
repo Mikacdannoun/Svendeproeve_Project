@@ -6,11 +6,11 @@
 
 generator client {
   provider = "prisma-client-js"
-  output   = "../src/generated/prisma"
 }
 
 datasource db {
   provider = "mysql"
+  url      = env("DATABASE_URL")
 }
 
 // En fighter / udøver
@@ -29,4 +29,27 @@ model Session {
   videoUrl  String
   notes     String?  // valgfrit
   createdAt DateTime @default(now())
+  sessionTags SessionTag[] // alle tags på denne session
+}
+
+// Genbrugelig tag-type
+model Tag {
+  id          Int          @id @default(autoincrement())
+  name        String       @unique
+  description String?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  sessionTags SessionTag[]
+}
+
+//kobling mellem en Session og et Tag (evt. med timestamp i videoen)
+model SessionTag {
+  id          Int      @id @default(autoincrement())
+  session     Session  @relation(fields: [sessionId], references: [id])
+  sessionId   Int
+  tag         Tag      @relation(fields: [tagId], references: [id])
+  tagId       Int
+  timestampSec Int?    // fx 73 = 1:13 inde i videoen
+  note        String?
+  createdAt   DateTime @default(now())
 }
