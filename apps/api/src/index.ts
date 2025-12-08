@@ -367,6 +367,289 @@ app.delete(
   }
 );
 
+// GET /api/athletes/:athleteId/stats/tags - hent statistik over tags for en athlete
+app.get(
+  "/api/athletes/:athleteId/stats/tags",
+  async (req: Request<{ athleteId: string }>, res: Response) => {
+    try {
+      const athleteId = Number(req.params.athleteId);
+
+      if (Number.isNaN(athleteId)) {
+        return res.status(400).json({ error: "Invalid athlete id" });
+      }
+
+      // 1) Gruppér SessionTags pr. tagId for denne athlete
+      const grouped = await prisma.sessionTag.groupBy({
+        by: ["tagId"],
+        where: {
+          session: {
+            athleteId,
+          },
+        },
+        _count: {
+          _all: true,
+        },
+      });
+
+      if (grouped.length === 0) {
+        return res.json({
+          athleteId,
+          totalTagApplications: 0,
+          topTags: [],
+        });
+      }
+
+      // Sorter i JS efter count (desc)
+      const sorted = grouped.sort(
+        (a, b) => (b._count?._all ?? 0) - (a._count?._all ?? 0)
+      );
+
+      const tagIds = sorted.map((g) => g.tagId);
+
+      // 2) Hent tags for de IDs
+      const tags = await prisma.tag.findMany({
+        where: {
+          id: {
+            in: tagIds,
+          },
+        },
+      });
+
+      // 3) Join data til et pænt response
+      const tagMap = new Map<number, (typeof tags)[number]>();
+      tags.forEach((t) => tagMap.set(t.id, t));
+
+      const topTags = sorted.map((g) => {
+        const tag = tagMap.get(g.tagId);
+        const count = g._count?._all ?? 0;
+
+        return {
+          tagId: g.tagId,
+          name: tag?.name ?? "Unknown",
+          description: tag?.description ?? null,
+          count,
+        };
+      });
+
+      const totalTagApplications = topTags.reduce(
+        (sum, t) => sum + t.count,
+        0
+      );
+
+      res.json({
+        athleteId,
+        totalTagApplications,
+        topTags,
+      });
+    } catch (error) {
+      console.error("Error fetching athlete tag stats:", error);
+      res.status(500).json({ error: "Failed to fetch athlete tag stats" });
+    }
+  }
+);
+
+// GET /api/athletes/:athleteId/stats/sessions - session stats for en athlete
+app.get(
+  "/api/athletes/:athleteId/stats/sessions",
+  async (req: Request<{ athleteId: string }>, res: Response) => {
+    try {
+      const athleteId = Number(req.params.athleteId);
+
+      if (Number.isNaN(athleteId)) {
+        return res.status(400).json({ error: "Invalid athlete id" });
+      }
+
+      // Hent alle sessions for athlete + antal tags pr. session
+      const sessions = await prisma.session.findMany({
+        where: { athleteId },
+        orderBy: {
+          createdAt: "asc",
+        },
+        include: {
+          _count: {
+            select: {
+              sessionTags: true,
+            },
+          },
+        },
+      });
+
+      if (sessions.length === 0) {
+        return res.json({
+          athleteId,
+          sessionCount: 0,
+          totalTags: 0,
+          averageTagsPerSession: 0,
+          sessions: [],
+        });
+      }
+
+      const sessionStats = sessions.map((s) => ({
+        sessionId: s.id,
+        videoUrl: s.videoUrl,
+        notes: s.notes,
+        createdAt: s.createdAt,
+        tagCount: s._count.sessionTags,
+      }));
+
+      const totalTags = sessionStats.reduce(
+        (sum, s) => sum + s.tagCount,
+        0
+      );
+
+      const averageTagsPerSession = totalTags / sessions.length;
+
+      res.json({
+        athleteId,
+        sessionCount: sessions.length,
+        totalTags,
+        averageTagsPerSession,
+        sessions: sessionStats,
+      });
+    } catch (error) {
+      console.error("Error fetching athlete session stats:", error);
+      res.status(500).json({ error: "Failed to fetch athlete session stats" });
+    }
+  }
+);
+
+// GET /api/athletes/:athleteId/dashboard - oversigtsdata til dashboard
+app.get("/api/athletes/:athleteId/dashboard", async (req: Request<{ athleteId: string }>, res: Response) => {
+    try {
+        const athleteId = Number(req.params.athleteId);
+
+        if (Number.isNaN(athleteId)) {
+            return res.status(400).json({ error: "Invalid athlete id" });
+        }
+
+        // 1) Hent athlete
+        const athlete = await prisma.athlete.findUnique({
+            where: { id: athleteId },
+        });
+
+        if (!athlete) {
+            return res.status(404).json({ error: "Athlete not found" });
+        }
+
+        // 2) Hent sessions + antal tags pr. session
+        const sessions = await prisma.session.findMany({
+            where: { athleteId },
+            orderBy: {
+                createdAt: "asc",
+            },
+            include: {
+                _count: {
+                    select: {
+                        sessionTags: true,
+                    },
+                },
+            },
+        });
+
+        const sessionStats = sessions.map((s) => ({
+            sessionId: s.id,
+            videoUrl: s.videoUrl,
+            notes: s.notes,
+            createdAt: s.createdAt,
+            tagCount: s._count.sessionTags,
+        }));
+
+        const sessionCount = sessionStats.length;
+        const totalTags = sessionStats.reduce((sum, s) => sum + s.tagCount, 0);
+        const averageTagsPerSession = sessionCount > 0 ? totalTags / sessionCount : 0;
+
+        // Seneste 5 sessions (sorteret nyeste først)
+        const recentSessions = [...sessionStats].sort((a, b) => 
+            new Date(b.createdAt).getTime() -
+            new Date(a.createdAt).getTime()
+        ).slice(0, 5);
+
+        // 3) Top-tags for denne athlete via groupBy på sessionTag
+        const grouped = await prisma.sessionTag.groupBy({
+            by: ["tagId"],
+            where: {
+                session: {
+                    athleteId,
+                },
+            },
+            _count: {
+                _all: true,
+            },
+        });
+
+        let topTags: {
+            tagId: number;
+            name: string;
+            description: string | null;
+            count: number;
+        }[] = [];
+        let distinctTagsCount = 0;
+        let mostUsedTag:
+        | {
+            tagId: number;
+            name: string;
+            description: string | null;
+            count: number;
+        }
+        | null = null;
+
+        if (grouped.length > 0) {
+            const sorted = grouped.sort(
+                (a, b) => (b._count?._all ?? 0) - (a._count?._all ?? 0)
+            );
+
+            const tagIds = sorted.map((g) => g.tagId);
+
+            const tags = await prisma.tag.findMany({
+                where: {
+                    id: {
+                        in: tagIds,
+                    },
+                },
+            });
+
+            const tagMap = new Map<number, (typeof tags)[number]>();
+            tags.forEach((t) => tagMap.set(t.id, t));
+
+            topTags = sorted.map((g) => {
+                const tag = tagMap.get(g.tagId);
+                const count = g._count?._all ?? 0;
+
+                return {
+                    tagId: g.tagId,
+                    name: tag?.name ??  "Unknown",
+                    description: tag?.description ?? null,
+                    count,
+                };
+            });
+
+            distinctTagsCount = topTags.length;
+            mostUsedTag = topTags[0] ?? null;
+        }
+
+        // 4) Samlet dashboard response
+        res.json({
+            athlete: {
+                id: athlete.id,
+                name: athlete.name,
+                createdAt: athlete.createdAt,
+            },
+            summary: {
+                sessionCount,
+                totalTags,
+                averageTagsPerSession,
+                distinctTagsCount,
+                mostUsedTag,
+            },
+            recentSessions,
+            topTags,
+        });
+    } catch (error) {
+        console.error("Error fetching athlete dashboard:", error);
+        res.status(500).json({ error: "Failed to fetch athlete dashboard" });
+    }
+    }
+);
 
 
 // 404 fallback
