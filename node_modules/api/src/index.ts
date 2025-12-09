@@ -5,12 +5,20 @@ import prisma from "./prisma";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { Request, Response, NextFunction } from "express";
+import path from "path";
+import multer from "multer";
 
 dotenv.config();
 
 const JWT_SECRET = process.env.JWT_SECRET ?? "dev-secret";
 
 const app = express();
+
+const upload = multer({
+  dest: path.join(__dirname, "../uploads"),
+});
+
+app.use("/uploads", express.static(path.join(__dirname, "../uploads")));
 
 interface AuthRequest extends Request {
     userId?: number;
@@ -854,6 +862,197 @@ app.get("/api/me", authMiddleware, async (req: AuthRequest, res: Response) => {
   } catch (error) {
     console.error("Error in /api/me:", error);
     res.status(500).json({ error: "Failed to fetch profile" });
+  }
+});
+
+// "/api/my/sessions"
+app.post("/api/my/sessions", authMiddleware, async (req: AuthRequest, res: Response) => {
+  try {
+    if (!req.userId) {
+      return res.status(401).json({ error: "Not authenticated" });
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: req.userId },
+      include: {
+        athlete: true,
+      },
+    });
+
+    if (!user || !user.athlete) {
+      return res.status(404).json({ error: "Athlete profile not found for this user" });
+    }
+
+    const { videoUrl, notes } = req.body as {
+      videoUrl?: string;
+      notes?: string;
+    };
+
+    if (!videoUrl || !videoUrl.trim()) {
+      return res.status(400).json({ error: "videoUrl is required" });
+    }
+
+    const session = await prisma.session.create({
+      data: {
+        athleteId: user.athlete.id,
+        videoUrl: videoUrl.trim(),
+        notes: notes?.trim() || null,
+      },
+    });
+
+    res.status(201).json(session);
+  } catch (error) {
+    console.error("Error in POST /api/my/sessions:", error);
+    res.status(500).json({ error: "Failed to create session" });
+  }
+});
+
+app.post("/api/my/sessions/upload", authMiddleware, upload.single("video"), async (req: AuthRequest, res: Response) => {
+  try {
+    if (!req.userId) {
+      return res.status(401).json({ error: "Not authenticated" });
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: req.userId },
+      include: { athlete: true },
+    });
+
+    if (!user || !user.athlete) {
+      return res.status(404).json({ error: "Athlete profile not found for this user" });
+    }
+
+    if (!req.file) {
+      return res.status(400).json({ error: "Video file is required" });
+    }
+
+    const { notes } = req.body as { notes?: string };
+
+    // gem relativ sti, som frontend kan bruge direkte
+    const videoUrl = `/uploads/${req.file.filename}`;
+
+    const session = await prisma.session.create({
+      data: {
+        athleteId: user.athlete.id,
+        videoUrl,
+        notes: notes?.trim() || null,
+      },
+    });
+
+    res.status(201).json(session);
+  } catch (error) {
+    console.error("Error in POST /api/my/sessions/upload:", error);
+    res.status(500).json({ error: "Failed to create session with video" });
+  }
+});
+
+// "/api/my/sessions/:sessionId"
+app.get("/api/my/sessions/:sessionId", authMiddleware, async (req: AuthRequest, res: Response) => {
+  try {
+    if (!req.userId) {
+      return res.status(401).json({ error: "Not authenticated" });
+    }
+
+    const sessionId = Number(req.params.sessionId);
+    if (Number.isNaN(sessionId)) {
+      return res.status(400).json({ error: "Invalid session id" });
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: req.userId },
+      include: { athlete: true },
+    });
+
+    if (!user || !user.athlete) {
+      return res.status(404).json({ error: "Athlete profile not found for this user" });
+    }
+
+    const session = await prisma.session.findFirst({
+      where: {
+        id: sessionId,
+        athleteId: user.athlete.id,
+      },
+      include: {
+        sessionTags: {
+          include: {
+            tag: true,
+          },
+          orderBy: {
+            timestampSec: "asc",
+          },
+        },
+      },
+    });
+
+    if (!session) {
+      return res.status(404).json({ error: "Session not found" });
+    }
+
+    res.json(session);
+  } catch (error) {
+    console.error("Error in GET /api/my/session/:sessionId:", error);
+    res.status(500).json({ error: "Failed to fetch session" });
+  }
+});
+
+// /api/my/sessions/:sessionId/tags - tilføj tag ved timestamp
+app.post("/api/my/sessions/:sessionId/tags", authMiddleware, async (req: AuthRequest, res: Response) => {
+  try {
+    if (!req.userId) {
+      return res.status(401).json({ error: "Not authenticated" });
+    }
+
+    const sessionId = Number(req.params.sessionId);
+    if (Number.isNaN(sessionId)) {
+      return res.status(400).json({ error: "Invalid session iD" });
+    }
+
+    const { tagId, timestampSec, note } = req.body as {
+      tagId?: number;
+      timestampSec?: number;
+      note?: string;
+    };
+
+    if (!tagId) {
+      return res.status(400).json({ error: "tagId is required" });
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: req.userId },
+      include: { athlete: true },
+    });
+
+    if (!user || !user.athlete) {
+      return res.status(404).json({ error: "Athlete profile not found for this user" });
+    }
+
+    const session = await prisma.session.findFirst({
+      where: {
+        id: sessionId,
+        athleteId: user.athlete.id,
+      },
+    });
+
+    if (!session) {
+      return res.status(404).json({ error: "Session not found" });
+    }
+
+    const created = await prisma.sessionTag.create({
+      data: {
+        sessionId,
+        tagId,
+        timestampSec: timestampSec ?? null,
+        note: note?.trim() || null,
+      },
+      include: {
+        tag: true,
+      },
+    });
+
+    res.status(201).json(created);
+  } catch (error) {
+    console.error("Error in POST /api/my/sessions/:sessionId/tags:", error);
+    res.status(500).json({ error: "Failed to create session tag" });
   }
 });
 

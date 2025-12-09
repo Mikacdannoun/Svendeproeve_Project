@@ -38,9 +38,13 @@ model Session {
   id        Int      @id @default(autoincrement())
   athlete   Athlete  @relation(fields: [athleteId], references: [id])
   athleteId Int
-  videoUrl  String
-  notes     String?  // valgfrit
-  createdAt DateTime @default(now())
+
+  title       String?
+  Date        DateTime      @default(now())
+  videoUrl    String
+  notes       String?
+
+  createdAt   DateTime      @default(now())
   sessionTags SessionTag[] // alle tags på denne session
 }
 
