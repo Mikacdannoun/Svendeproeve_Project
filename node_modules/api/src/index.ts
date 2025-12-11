@@ -18,6 +18,18 @@ const upload = multer({
   dest: path.join(__dirname, "../uploads"),
 });
 
+const TAG_CATEGORIES = [
+  "TECHNICAL_ERROR",
+  "TECHNICAL_STRENGTH",
+  "TACTICAL_DECISION",
+  "OFFENSIVE",
+  "DEFENSIVE",
+  "PHYSICAL",
+  "MENTAL",
+] as const;
+
+type TagCategoryType = (typeof TAG_CATEGORIES)[number];
+
 app.use("/uploads", express.static(path.join(__dirname, "../uploads")));
 
 interface AuthRequest extends Request {
@@ -1053,6 +1065,99 @@ app.post("/api/my/sessions/:sessionId/tags", authMiddleware, async (req: AuthReq
   } catch (error) {
     console.error("Error in POST /api/my/sessions/:sessionId/tags:", error);
     res.status(500).json({ error: "Failed to create session tag" });
+  }
+});
+
+// GET /api/my/tags - list brugerens tags
+app.get(
+  "/api/my/tags",
+  authMiddleware,
+  async (req: AuthRequest, res: Response) => {
+    try {
+      if (!req.userId) {
+        return res.status(401).json({ error: "Not authenticated" });
+      }
+
+      const user = await prisma.user.findUnique({
+        where: { id: req.userId },
+        include: { athlete: true },
+      });
+
+      if (!user || !user.athlete) {
+        return res
+          .status(404)
+          .json({ error: "Athlete profile not found for this user" });
+      }
+
+      const tags = await prisma.tag.findMany({
+        where: {
+          OR: [
+            { athleteId: user.athlete.id }, // brugerens egne tags
+            { athleteId: null },            // globale / fælles tags
+          ],
+        },
+        orderBy: [
+          { category: "asc" }, // category kan godt være nullable
+          { name: "asc" },
+        ],
+      });
+
+      res.json(tags);
+    } catch (error) {
+      console.error("Error in GET /api/my/tags:", error);
+      res.status(500).json({ error: "Failed to fetch tags" });
+    }
+  }
+);
+
+// POST /api/my/tags - Opret nyt tag
+app.post("/api/my/tags", authMiddleware, async (req: AuthRequest, res: Response) => {
+  try {
+    if (!req.userId) {
+      return res.status(401).json({ error: "Not authenticated" });
+    }
+
+    const { name, description, category } = req.body as {
+      name?: string;
+      description?: string;
+      category?: string;
+    };
+
+    if (!name || !category) {
+      return res.status(400).json({ error: "name and category is required" });
+    }
+
+    const trimmedName = name.trim();
+    if(!trimmedName) {
+      return res.status(400).json({ error: "Name cant be empty" });
+    }
+
+    if (!TAG_CATEGORIES.includes(category as TagCategoryType)) {
+      return res.status(400).json({ error: "Invalid category" });
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: req.userId },
+      include: { athlete: true },
+    });
+
+    if (!user || !user.athlete) {
+      return res.status(404).json({ error: "Athlete profile not found for this user" });
+    }
+
+    const created = await prisma.tag.create({
+      data: {
+        name: trimmedName,
+        description: description?.trim() || null,
+        category: category as TagCategoryType,
+        athleteId: user.athlete.id,
+      },
+    });
+
+    res.status(201).json(created);
+  } catch (error) {
+    console.error("Error in POST /api/my/tags:", error);
+    res.status(500).json({ error: "Failed to create tag" });
   }
 });
 

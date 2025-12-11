@@ -178,10 +178,40 @@ export interface Tag {
     id: number;
     name: string;
     description: string | null;
+    category: TagCategory | null;
+    athleteId: number | null;
+    createdAt: string;
+    updatedAt: string;
 }
 
-export async function getTags(): Promise<Tag[]> {
-    return apiFetch<Tag[]>("/api/tags");
+export type TagCategory =
+  | "TECHNICAL_ERROR"
+  | "TECHNICAL_STRENGTH"
+  | "TACTICAL_DECISION"
+  | "OFFENSIVE"
+  | "DEFENSIVE"
+  | "PHYSICAL"
+  | "MENTAL";
+
+export async function getMyTags(): Promise<Tag[]> {
+    return apiFetch<Tag[]>("/api/my/tags", {}, true);
+}
+
+export interface CreateTagInput {
+    name: string;
+    description?: string;
+    category: TagCategory;
+}
+
+export async function createMyTag(input: CreateTagInput): Promise<Tag> {
+    return apiFetch<Tag>(
+        "/api/my/tags",
+        {
+            method: "POST",
+            body: JSON.stringify(input),
+        },
+        true
+    );
 }
 
 export interface SessionTag {

@@ -14,58 +14,76 @@ datasource db {
 }
 
 model User {
-  id            Int      @id @default(autoincrement())
-  email         String   @unique
-  passwordHash  String
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  id           Int      @id @default(autoincrement())
+  email        String   @unique
+  passwordHash String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
-  athlete       Athlete?
+  athlete Athlete?
 }
 
 // En fighter / udøver
 model Athlete {
-  id        Int      @id @default(autoincrement())
+  id        Int       @id @default(autoincrement())
   name      String
-  createdAt DateTime @default(now())
+  createdAt DateTime  @default(now())
   sessions  Session[]
-  user      User?    @relation(fields: [userId], references: [id])
-  userId    Int?     @unique
+  user      User?     @relation(fields: [userId], references: [id])
+  userId    Int?      @unique
+  tags      Tag[]
 }
 
 // En trænings eller kamp session (med video)
 model Session {
-  id        Int      @id @default(autoincrement())
-  athlete   Athlete  @relation(fields: [athleteId], references: [id])
+  id        Int     @id @default(autoincrement())
+  athlete   Athlete @relation(fields: [athleteId], references: [id])
   athleteId Int
 
-  title       String?
-  Date        DateTime      @default(now())
-  videoUrl    String
-  notes       String?
+  title    String?
+  Date     DateTime @default(now())
+  videoUrl String
+  notes    String?
 
-  createdAt   DateTime      @default(now())
+  createdAt   DateTime     @default(now())
   sessionTags SessionTag[] // alle tags på denne session
 }
 
 // Genbrugelig tag-type
 model Tag {
   id          Int          @id @default(autoincrement())
-  name        String       @unique
+  name        String
   description String?
+  category    TagCategory?
+
+  athlete   Athlete? @relation(fields: [athleteId], references: [id])
+  athleteId Int?
+
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
   sessionTags SessionTag[]
+
+  @@unique([athleteId, name])
 }
 
 //kobling mellem en Session og et Tag (evt. med timestamp i videoen)
 model SessionTag {
-  id          Int      @id @default(autoincrement())
-  session     Session  @relation(fields: [sessionId], references: [id])
-  sessionId   Int
-  tag         Tag      @relation(fields: [tagId], references: [id])
-  tagId       Int
-  timestampSec Int?    // fx 73 = 1:13 inde i videoen
-  note        String?
-  createdAt   DateTime @default(now())
+  id           Int      @id @default(autoincrement())
+  session      Session  @relation(fields: [sessionId], references: [id])
+  sessionId    Int
+  tag          Tag      @relation(fields: [tagId], references: [id])
+  tagId        Int
+  timestampSec Int? // fx 73 = 1:13 inde i videoen
+  note         String?
+  createdAt    DateTime @default(now())
+}
+
+enum TagCategory {
+  TECHNICAL_ERROR
+  TECHNICAL_STRENGTH
+  TACTICAL_DECISION
+  OFFENSIVE
+  DEFENSIVE
+  PHYSICAL
+  MENTAL
 }

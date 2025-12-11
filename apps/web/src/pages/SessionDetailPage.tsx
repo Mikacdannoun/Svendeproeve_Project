@@ -1,11 +1,33 @@
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { getMySession, addTagToMySession, getTags } from "../api/client";
+import { getMySession, addTagToMySession, getMyTags, createMyTag } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
-import type { SessionWithTags, Tag } from "../api/client";
+import type { SessionWithTags, Tag, TagCategory } from "../api/client";
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhsot:4000";
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:4000";
+
+function formatCategory(cat: TagCategory | null): string {
+      if (!cat) return "uncategorized";
+      switch (cat) {
+        case "TECHNICAL_ERROR": 
+          return "Technical error";
+        case "TECHNICAL_STRENGTH":
+          return "Technical strength";
+        case "TACTICAL_DECISION":
+          return "Tactical decision";
+        case "OFFENSIVE":
+          return "Offensive success/mistake";
+        case "DEFENSIVE":
+          return "Defensive success/mistake";
+        case "PHYSICAL":
+          return "Physical performance";
+        case "MENTAL":
+          return "Mental performance";
+        default:
+          return cat;
+      }
+    }
 
 export default function SessionDetailPage() {
     const { sessionId } = useParams<{ sessionId: string }>();
@@ -25,6 +47,16 @@ export default function SessionDetailPage() {
     const [addError, setAddError] = useState<string | null>(null);
     const [duration, setDuration] = useState(0);
     const [currentTime, setCurrentTime] = useState(0);
+
+    const [newTagName, setNewTagName] = useState("");
+    const [newTagDescription, setNewTagDescription] = useState("");
+    const [newTagCategory, setNewTagCategory] =
+      useState<TagCategory>("TECHNICAL_ERROR");
+    const [showNewTagForm, setShowNewTagForm] = useState(false);
+    const [creatingTag, setCreatingTag] = useState(false);
+    const [createTagError, setCreateTagError] = useState<string | null>(
+    null
+);
 
     // Hent session + tags
   useEffect(() => {
@@ -48,7 +80,7 @@ export default function SessionDetailPage() {
 
         const [sessionData, tagsData] = await Promise.all([
           getMySession(id),
-          getTags(),
+          getMyTags(),
         ]);
 
         setSession(sessionData);
@@ -101,6 +133,39 @@ export default function SessionDetailPage() {
       setAddError("Kunne ikke tilføje tag. Prøv igen.");
     } finally {
       setAddingTag(false);
+    }
+  }
+
+  async function handleCreateNewTagClick() {
+    setCreateTagError(null);
+
+    const trimmedName = newTagName.trim();
+    if (!trimmedName) {
+      setCreateTagError("Navn må ikke være tomt.");
+      return;
+    }
+
+    try {
+      setCreatingTag(true);
+      const created = await createMyTag({
+        name: trimmedName,
+        description: newTagDescription.trim() || undefined,
+        category: newTagCategory,
+      });
+
+      // opdater tags-liste + vælg det nye tag
+      setTags((prev) => [...prev, created]);
+      setSelectedTagId(created.id);
+      setNewTagName("");
+      setNewTagDescription("");
+      setNewTagCategory("TECHNICAL_ERROR");
+      setShowNewTagForm(false);
+      console.log("Tag created:", created);
+    } catch (err) {
+      console.error(err);
+      setCreateTagError("Kunne ikke oprette tag. Prøv igen.");
+    } finally {
+      setCreatingTag(false);
     }
   }
 
@@ -252,14 +317,80 @@ export default function SessionDetailPage() {
                   }}
                   className="w-full rounded-lg border border-stone-700 bg-stone-950 px-2 py-2 text-xs text-stone-100 focus:outline-none focus:ring-2 focus:ring-sky-500"
                 >
-                  <option value="">-- Vælg tag --</option>
+                  <option value="">-- Choose Tag --</option>
                   {tags.map((t) => (
                     <option key={t.id} value={t.id}>
-                      {t.name}
+                      [{formatCategory(t.category)}] {t.name}
                       {t.description ? ` – ${t.description}` : ""}
                     </option>
                   ))}
                 </select>
+                <button
+                  type="button"
+                  onClick={() => setShowNewTagForm((prev) => !prev)}
+                  className="text-[11px] text-sky-400 hover:text-sky-300 mt-1"
+                >
+                  {showNewTagForm ? "Annuller oprettelse af tag" : "Opret nyt tag"}
+                </button>
+                {showNewTagForm && (
+                <div className="mt-2 space-y-2 rounded-lg border border-slate-800 bg-slate-950/80 p-2">
+                  <div>
+                    <label className="block text-[11px] mb-1 text-slate-300">
+                      Kategori
+                    </label>
+                    <select
+                      value={newTagCategory}
+                      onChange={(e) =>
+                        setNewTagCategory(e.target.value as TagCategory)
+                      }
+                      className="w-full rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-[11px] text-slate-100 focus:outline-none focus:ring-1 focus:ring-sky-500"
+                    >
+                      <option value="TECHNICAL_ERROR">Tekniske fejl</option>
+                      <option value="TECHNICAL_STRENGTH">Tekniske styrker</option>
+                      <option value="TACTICAL_DECISION">Taktiske beslutninger</option>
+                      <option value="OFFENSIVE">Offensiv succes/fejl</option>
+                      <option value="DEFENSIVE">Defensiv succes/fejl</option>
+                      <option value="PHYSICAL">Fysisk performance</option>
+                      <option value="MENTAL">Mental performance</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[11px] mb-1 text-slate-300">
+                      Navn
+                    </label>
+                    <input
+                      type="text"
+                      value={newTagName}
+                      onChange={(e) => setNewTagName(e.target.value)}
+                      className="w-full rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-[11px] text-slate-100 focus:outline-none focus:ring-1 focus:ring-sky-500"
+                      placeholder="Fx: Guard for lav, Perfekt jab, God angle entry"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] mb-1 text-slate-300">
+                      Beskrivelse (valgfrit)
+                    </label>
+                    <textarea
+                      value={newTagDescription}
+                      onChange={(e) => setNewTagDescription(e.target.value)}
+                      rows={2}
+                      className="w-full rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-[11px] text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+                      placeholder="Fx: Dropper rear hand efter combos..."
+                    />
+                  </div>
+                  {createTagError && (
+                    <p className="text-[11px] text-red-400">{createTagError}</p>
+                  )}
+                  <button
+                    type="button"
+                    onClick={handleCreateNewTagClick}
+                    disabled={creatingTag}
+                    className="rounded-md bg-emerald-500 px-2 py-1 text-[11px] font-medium text-slate-950 hover:bg-emerald-400 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {creatingTag ? "Opretter..." : "Gem nyt tag"}
+                  </button>
+                </div>
+              )}
               </div>
               <div>
                 <label className="block mb-1 text-stone-300">
