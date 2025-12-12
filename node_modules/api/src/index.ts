@@ -7,6 +7,7 @@ import jwt from "jsonwebtoken";
 import { Request, Response, NextFunction } from "express";
 import path from "path";
 import multer from "multer";
+import type { TagCategory, TagOutcome } from "@prisma/client";
 
 dotenv.config();
 
@@ -959,60 +960,64 @@ app.post("/api/my/sessions/upload", authMiddleware, upload.single("video"), asyn
 });
 
 // "/api/my/sessions/:sessionId"
-app.get("/api/my/sessions/:sessionId", authMiddleware, async (req: AuthRequest, res: Response) => {
-  try {
-    if (!req.userId) {
-      return res.status(401).json({ error: "Not authenticated" });
-    }
+app.get(
+  "/api/my/sessions/:sessionId",
+  authMiddleware,
+  async (req: AuthRequest, res: Response) => {
+    try {
+      if (!req.userId) {
+        return res.status(401).json({ error: "Not authenticated" });
+      }
 
-    const sessionId = Number(req.params.sessionId);
-    if (Number.isNaN(sessionId)) {
-      return res.status(400).json({ error: "Invalid session id" });
-    }
+      const sessionId = Number(req.params.sessionId);
+      if (Number.isNaN(sessionId)) {
+        return res.status(400).json({ error: "Invalid session id" });
+      }
 
-    const user = await prisma.user.findUnique({
-      where: { id: req.userId },
-      include: { athlete: true },
-    });
+      const user = await prisma.user.findUnique({
+        where: { id: req.userId },
+        include: { athlete: true },
+      });
 
-    if (!user || !user.athlete) {
-      return res.status(404).json({ error: "Athlete profile not found for this user" });
-    }
+      if (!user || !user.athlete) {
+        return res
+          .status(404)
+          .json({ error: "Athlete profile not found for this user" });
+      }
 
-    const session = await prisma.session.findFirst({
-      where: {
-        id: sessionId,
-        athleteId: user.athlete.id,
-      },
-      include: {
-        sessionTags: {
-          include: {
-            tag: true,
-          },
-          orderBy: {
-            timestampSec: "asc",
+      const session = await prisma.session.findFirst({
+        where: {
+          id: sessionId,
+          athleteId: user.athlete.id,
+        },
+        include: {
+          sessionTags: {
+            include: {
+              tag: true, // 🔹 får hele tag (inkl. outcome)
+            },
+            orderBy: {
+              timestampSec: "asc",
+            },
           },
         },
-      },
-    });
+      });
 
-    if (!session) {
-      return res.status(404).json({ error: "Session not found" });
+      if (!session) {
+        return res.status(404).json({ error: "Session not found" });
+      }
+
+      res.json(session);
+    } catch (error) {
+      console.error("Error in GET /api/my/sessions/:sessionId:", error);
+      res.status(500).json({ error: "Failed to fetch session" });
     }
-
-    res.json(session);
-  } catch (error) {
-    console.error("Error in GET /api/my/session/:sessionId:", error);
-    res.status(500).json({ error: "Failed to fetch session" });
   }
-});
+);
 
 // /api/my/sessions/:sessionId/tags - tilføj tag ved timestamp
 app.post("/api/my/sessions/:sessionId/tags", authMiddleware, async (req: AuthRequest, res: Response) => {
   try {
-    if (!req.userId) {
-      return res.status(401).json({ error: "Not authenticated" });
-    }
+    if (!req.userId) return res.status(401).json({ error: "Not authenticated" });
 
     const sessionId = Number(req.params.sessionId);
     if (Number.isNaN(sessionId)) {
@@ -1034,19 +1039,24 @@ app.post("/api/my/sessions/:sessionId/tags", authMiddleware, async (req: AuthReq
       include: { athlete: true },
     });
 
-    if (!user || !user.athlete) {
+    if (!user?.athlete) {
       return res.status(404).json({ error: "Athlete profile not found for this user" });
     }
 
     const session = await prisma.session.findFirst({
-      where: {
-        id: sessionId,
-        athleteId: user.athlete.id,
-      },
+      where: { id: sessionId, athleteId: user.athlete.id },
     });
 
     if (!session) {
       return res.status(404).json({ error: "Session not found" });
+    }
+
+    const tag = await prisma.tag.findFirst({
+      where: { id: tagId, athleteId: user.athlete.id },
+    });
+
+    if (!tag) {
+      return res.status(403).json({ error: "You can only use your own tags" });
     }
 
     const created = await prisma.sessionTag.create({
@@ -1056,9 +1066,7 @@ app.post("/api/my/sessions/:sessionId/tags", authMiddleware, async (req: AuthReq
         timestampSec: timestampSec ?? null,
         note: note?.trim() || null,
       },
-      include: {
-        tag: true,
-      },
+      include: { tag: true },
     });
 
     res.status(201).json(created);
@@ -1068,7 +1076,208 @@ app.post("/api/my/sessions/:sessionId/tags", authMiddleware, async (req: AuthReq
   }
 });
 
-// GET /api/my/tags - list brugerens tags
+// POST /api/my/tags - Opret nyt tag
+app.post("/api/my/tags", authMiddleware, async (req: AuthRequest, res: Response) => {
+  try {
+    if (!req.userId) return res.status(401).json({ error: "Not authenticated" });
+
+    const { name, description, category, outcome } = req.body as {
+      name?: string;
+      description?: string;
+      category?: string;
+      outcome?: string | null;
+    };
+
+    if (!name || !category) {
+      return res.status(400).json({ error: "name and category is required" });
+    }
+
+    const trimmedName = name.trim();
+    if (!trimmedName) {
+      return res.status(400).json({ error: "Name cant be empty" });
+    }
+
+    if (!TAG_CATEGORIES.includes(category as TagCategoryType)) {
+      return res.status(400).json({ error: "Invalid category" });
+    }
+
+    const finalCategory = category as TagCategoryType;
+    const needsOutcome = finalCategory === "OFFENSIVE" || finalCategory === "DEFENSIVE";
+
+    let finalOutcome: TagOutcome | null = null;
+
+    if (needsOutcome) {
+      if (outcome !== "SUCCESS" && outcome !== "FAIL") {
+        return res.status(400).json({
+          error: "Outcome is required for OFFENSIVE/DEFENSIVE and must be SUCCESS or FAIL",
+        });
+      }
+      finalOutcome = outcome as TagOutcome;
+    } else {
+      // non OFF/DEF tags should never have outcome
+      finalOutcome = null;
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: req.userId },
+      include: { athlete: true },
+    });
+
+    if (!user?.athlete) {
+      return res.status(404).json({ error: "Athlete profile not found for this user" });
+    }
+
+    const created = await prisma.tag.create({
+      data: {
+        name: trimmedName,
+        description: description?.trim() || null,
+        category: finalCategory,
+        outcome: finalOutcome, // ✅ important
+        athleteId: user.athlete.id,
+      },
+    });
+
+    res.status(201).json(created);
+  } catch (error) {
+    console.error("Error in POST /api/my/tags:", error);
+    res.status(500).json({ error: "Failed to create tag" });
+  }
+});
+
+// PATCH /api/my/tags/:tagId - rename / ændre kategori / description
+app.patch(
+  "/api/my/tags/:tagId",
+  authMiddleware,
+  async (req: AuthRequest, res: Response) => {
+    try {
+      if (!req.userId) {
+        return res.status(401).json({ error: "Not authenticated" });
+      }
+
+      const tagId = Number(req.params.tagId);
+      if (Number.isNaN(tagId)) {
+        return res.status(400).json({ error: "Invalid tag id" });
+      }
+
+      const { name, description, category, outcome } = req.body as {
+        name?: string;
+        description?: string;
+        category?: string | null;
+        outcome?: string | null;
+      };
+
+      const user = await prisma.user.findUnique({
+        where: { id: req.userId },
+        include: { athlete: true },
+      });
+
+      if (!user || !user.athlete) {
+        return res
+          .status(404)
+          .json({ error: "Athlete profile not found for this user" });
+      }
+
+      const existing = await prisma.tag.findFirst({
+        where: {
+          id: tagId,
+          athleteId: user.athlete.id,
+        },
+      });
+
+      if (!existing) {
+        return res.status(404).json({ error: "Tag not found" });
+      }
+
+      const updateData: {
+        name?: string;
+        description?: string | null;
+        category?: TagCategory | null;
+        outcome?: TagOutcome | null;
+      } = {};
+
+      if (name !== undefined) {
+        const trimmed = name.trim();
+        if (!trimmed) {
+          return res
+            .status(400)
+            .json({ error: "name må ikke være tom" });
+        }
+        updateData.name = trimmed;
+      }
+
+      let finalCategory: TagCategory | null = existing.category;
+
+      if (category !== undefined) {
+        if (category === null || category === "") {
+          finalCategory = null;
+          updateData.category = null;
+        } else {
+          const validCategories: TagCategory[] = [
+            "TECHNICAL_ERROR",
+            "TECHNICAL_STRENGTH",
+            "TACTICAL_DECISION",
+            "OFFENSIVE",
+            "DEFENSIVE",
+            "PHYSICAL",
+            "MENTAL",
+          ];
+          if (!validCategories.includes(category as TagCategory)) {
+            return res
+              .status(400)
+              .json({ error: "Ugyldig category" });
+          }
+          finalCategory = category as TagCategory;
+          updateData.category = finalCategory;
+        }
+      }
+
+      if (description !== undefined) {
+        updateData.description = description.trim() || null;
+      }
+
+      // Outcome logik ved update:
+      const finalNeedsOutcome =
+        finalCategory === "OFFENSIVE" || finalCategory === "DEFENSIVE";
+
+      if (finalNeedsOutcome) {
+        let finalOutcome: TagOutcome | null = existing.outcome;
+
+        if (outcome !== undefined) {
+          if (outcome !== "SUCCESS" && outcome !== "FAIL") {
+            return res.status(400).json({
+              error:
+                "Outcome skal være 'SUCCESS' eller 'FAIL' for offensive/defensive tags",
+            });
+          }
+          finalOutcome = outcome as TagOutcome;
+        }
+
+        if (!finalOutcome) {
+          return res.status(400).json({
+            error:
+              "Outcome er påkrævet for offensive/defensive tags",
+          });
+        }
+
+        updateData.outcome = finalOutcome;
+      } else {
+        // hvis ikke offensiv/defensiv → outcome skal være null
+        updateData.outcome = null;
+      }
+
+      const updated = await prisma.tag.update({
+        where: { id: existing.id },
+        data: updateData,
+      });
+
+      res.json(updated);
+    } catch (error) {
+      console.error("Error in PATCH /api/my/tags/:tagId:", error);
+      res.status(500).json({ error: "Failed to update tag" });
+    }
+  }
+);
+
 app.get(
   "/api/my/tags",
   authMiddleware,
@@ -1091,15 +1300,9 @@ app.get(
 
       const tags = await prisma.tag.findMany({
         where: {
-          OR: [
-            { athleteId: user.athlete.id }, // brugerens egne tags
-            { athleteId: null },            // globale / fælles tags
-          ],
+          athleteId: user.athlete.id,
         },
-        orderBy: [
-          { category: "asc" }, // category kan godt være nullable
-          { name: "asc" },
-        ],
+        orderBy: [{ category: "asc" }, { name: "asc" }],
       });
 
       res.json(tags);
@@ -1110,57 +1313,160 @@ app.get(
   }
 );
 
-// POST /api/my/tags - Opret nyt tag
-app.post("/api/my/tags", authMiddleware, async (req: AuthRequest, res: Response) => {
+app.get(
+  "/api/my/tags/:tagId/usage",
+  authMiddleware,
+  async (req: AuthRequest, res: Response) => {
+    try {
+      if (!req.userId) {
+        return res.status(401).json({ error: "Not authenticated" });
+      }
+
+      const tagId = Number(req.params.tagId);
+      if (Number.isNaN(tagId)) {
+        return res.status(400).json({ error: "Invalid tag id" });
+      }
+
+      const user = await prisma.user.findUnique({
+        where: { id: req.userId },
+        include: { athlete: true },
+      });
+
+      if (!user || !user.athlete) {
+        return res
+          .status(404)
+          .json({ error: "Athlete profile not found for this user" });
+      }
+
+      const existing = await prisma.tag.findFirst({
+        where: {
+          id: tagId,
+          athleteId: user.athlete.id,
+        },
+      });
+
+      if (!existing) {
+        return res.status(404).json({ error: "Tag not found" });
+      }
+
+      const usageCount = await prisma.sessionTag.count({
+        where: {
+          tagId: existing.id,
+          session: {
+            athleteId: user.athlete.id,
+          },
+        },
+      });
+
+      res.json({ usageCount });
+    } catch (error) {
+      console.error("Error in GET /api/my/tags/:tagId/usage:", error);
+      res.status(500).json({ error: "Failed to fetch tag usage" });
+    }
+  }
+);
+
+app.delete(
+  "/api/my/tags/:tagId",
+  authMiddleware,
+  async (req: AuthRequest, res: Response) => {
+    try {
+      if (!req.userId) {
+        return res.status(401).json({ error: "Not authenticated" });
+      }
+
+      const tagId = Number(req.params.tagId);
+      if (Number.isNaN(tagId)) {
+        return res.status(400).json({ error: "Invalid tag id" });
+      }
+
+      const user = await prisma.user.findUnique({
+        where: { id: req.userId },
+        include: { athlete: true },
+      });
+
+      if (!user || !user.athlete) {
+        return res
+          .status(404)
+          .json({ error: "Athlete profile not found for this user" });
+      }
+
+      const existing = await prisma.tag.findFirst({
+        where: {
+          id: tagId,
+          athleteId: user.athlete.id,
+        },
+      });
+
+      if (!existing) {
+        return res.status(404).json({ error: "Tag not found" });
+      }
+
+      // Debug log (kan fjernes senere)
+      console.log("Deleting tag", existing.id, "for athlete", user.athlete.id);
+
+      // 1) Slet alle sessionTag-rækker for dette tag
+      const deletedLinks = await prisma.sessionTag.deleteMany({
+        where: {
+          tagId: existing.id,
+          session: {
+            athleteId: user.athlete.id,
+          },
+        },
+      });
+      console.log("Deleted sessionTag rows:", deletedLinks.count);
+
+      // 2) Slet selve tagget
+      await prisma.tag.delete({
+        where: { id: existing.id },
+      });
+
+      res.status(204).send();
+    } catch (error) {
+      console.error("Error in DELETE /api/my/tags/:tagId:", error);
+      res.status(500).json({ error: "Failed to delete tag" });
+    }
+  }
+);
+
+// GET /api/my/sessions?includeTags=true
+app.get("/api/my/sessions", authMiddleware, async (req: AuthRequest, res) => {
   try {
     if (!req.userId) {
       return res.status(401).json({ error: "Not authenticated" });
     }
 
-    const { name, description, category } = req.body as {
-      name?: string;
-      description?: string;
-      category?: string;
-    };
-
-    if (!name || !category) {
-      return res.status(400).json({ error: "name and category is required" });
-    }
-
-    const trimmedName = name.trim();
-    if(!trimmedName) {
-      return res.status(400).json({ error: "Name cant be empty" });
-    }
-
-    if (!TAG_CATEGORIES.includes(category as TagCategoryType)) {
-      return res.status(400).json({ error: "Invalid category" });
-    }
+    const includeTags = String(req.query.includeTags) === "true";
 
     const user = await prisma.user.findUnique({
       where: { id: req.userId },
       include: { athlete: true },
     });
 
-    if (!user || !user.athlete) {
-      return res.status(404).json({ error: "Athlete profile not found for this user" });
+    if (!user?.athlete) {
+      return res.status(404).json({ error: "Athlete profile not found" });
     }
 
-    const created = await prisma.tag.create({
-      data: {
-        name: trimmedName,
-        description: description?.trim() || null,
-        category: category as TagCategoryType,
-        athleteId: user.athlete.id,
-      },
+    const sessions = await prisma.session.findMany({
+      where: { athleteId: user.athlete.id },
+      orderBy: { createdAt: "asc" },
+      include: includeTags
+        ? {
+            sessionTags: {
+              include: {
+                tag: true, 
+              },
+            },
+          }
+        : undefined,
     });
 
-    res.status(201).json(created);
-  } catch (error) {
-    console.error("Error in POST /api/my/tags:", error);
-    res.status(500).json({ error: "Failed to create tag" });
+    res.json(sessions);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to fetch sessions" });
   }
 });
-
 
 // 404 fallback
 app.use((req, res) => {

@@ -49,12 +49,18 @@ model Session {
   sessionTags SessionTag[] // alle tags på denne session
 }
 
+enum TagOutcome {
+  SUCCESS
+  FAIL
+}
+
 // Genbrugelig tag-type
 model Tag {
   id          Int          @id @default(autoincrement())
   name        String
   description String?
   category    TagCategory?
+  outcome     TagOutcome? // kun brugbar for OFFENSIVE/DEFENSIVE
 
   athlete   Athlete? @relation(fields: [athleteId], references: [id])
   athleteId Int?

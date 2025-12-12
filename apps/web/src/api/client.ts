@@ -99,10 +99,24 @@ async function apiFetch<T>(
     });
 
     if (!res.ok) {
-        throw new Error(`Request failed: ${res.status}`);
-    }
+    const ct = res.headers.get("content-type") ?? "";
+    const body = ct.includes("application/json") ? await res.json().catch(() => null) : await res.text().catch(() => "");
+    const msg =
+      typeof body === "string" ? body :
+      body?.message ?? body?.error ?? `Request failed: ${res.status}`;
+    throw new Error(msg);
+  }
 
-    return res.json() as Promise<T>;
+  if (res.status === 204 || res.status === 205) {
+    return undefined as T;
+  }
+
+  const ct = res.headers.get("content-type") ?? "";
+  if (ct.includes("application/json")) {
+    return (await res.json()) as T;
+  }
+
+    return (await res.text()) as unknown as T;
 }
 
 // ---- Public / ikke-auth endpoints ---- //
@@ -179,6 +193,7 @@ export interface Tag {
     name: string;
     description: string | null;
     category: TagCategory | null;
+    outcome: TagOutcome | null;
     athleteId: number | null;
     createdAt: string;
     updatedAt: string;
@@ -201,6 +216,7 @@ export interface CreateTagInput {
     name: string;
     description?: string;
     category: TagCategory;
+    outcome?: TagOutcome;
 }
 
 export async function createMyTag(input: CreateTagInput): Promise<Tag> {
@@ -291,4 +307,55 @@ export async function addTagToMySession(
         },
         true // requireAuth
     );
+}
+
+
+export interface UpdateTagInput {
+  name?: string;
+  description?: string;
+  category?: TagCategory | null;
+  outcome?: TagOutcome | null;
+}
+
+export async function updateMyTag(
+  tagId: number,
+  input: UpdateTagInput
+): Promise<Tag> {
+  return apiFetch<Tag>(
+    `/api/my/tags/${tagId}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify(input),
+    },
+    true
+  );
+}
+
+export async function getMySessionsWithTags(): Promise<SessionWithTags[]> {
+  return apiFetch<SessionWithTags[]>(
+    "/api/my/sessions?includeTags=true",
+    {},
+    true
+  );
+}
+
+export async function deleteMyTag(tagId: number): Promise<void> {
+  await apiFetch<void>(
+    `/api/my/tags/${tagId}`,
+    {
+      method: "DELETE",
+    },
+    true
+  );
+}
+
+export type TagOutcome = "SUCCESS" | "FAIL";
+
+export async function getMyTagUsage(tagId: number): Promise<number> {
+  const result = await apiFetch<{ usageCount: number }>(
+    `/api/my/tags/${tagId}/usage`,
+    {},
+    true
+  );
+  return result.usageCount;
 }

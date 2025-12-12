@@ -45,7 +45,7 @@ export default function LoginPage() {
             </label>
             <input
               type="email"
-              className="w-full rounded-lg border border-stone-700 bg-stone-950 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500"
+              className="w-full rounded-lg border border-stone-700 bg-stone-950 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-500"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               autoComplete="email"
@@ -57,7 +57,7 @@ export default function LoginPage() {
             </label>
             <input
               type="password"
-              className="w-full rounded-lg border border-stone-700 bg-stone-950 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500"
+              className="w-full rounded-lg border border-stone-700 bg-stone-950 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-500"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               autoComplete="current-password"
@@ -69,7 +69,7 @@ export default function LoginPage() {
           <button
             type="submit"
             disabled={submitting}
-            className="w-full rounded-lg bg-sky-500 px-4 py-2 text-sm font-medium text-stone-950 hover:bg-sky-400 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            className="w-full rounded-lg bg-orange-500 px-4 py-2 text-sm font-medium text-stone-950 hover:bg-orange-400 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             {submitting ? "Logger ind..." : "Log ind"}
           </button>
@@ -78,7 +78,7 @@ export default function LoginPage() {
           Ingen konto?{" "}
           <Link
             to="/register"
-            className="text-sky-400 hover:text-sky-300"
+            className="text-orange-400 hover:text-orange-300"
           >
             Opret bruger
           </Link>

@@ -3,7 +3,7 @@ import type { FormEvent } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { getMySession, addTagToMySession, getMyTags, createMyTag } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
-import type { SessionWithTags, Tag, TagCategory } from "../api/client";
+import type { SessionWithTags, Tag, TagCategory, TagOutcome } from "../api/client";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:4000";
 
@@ -49,6 +49,7 @@ export default function SessionDetailPage() {
     const [currentTime, setCurrentTime] = useState(0);
 
     const [newTagName, setNewTagName] = useState("");
+    const [newTagOutcome, setNewTagOutcome] = useState<TagOutcome | null>(null);
     const [newTagDescription, setNewTagDescription] = useState("");
     const [newTagCategory, setNewTagCategory] =
       useState<TagCategory>("TECHNICAL_ERROR");
@@ -78,13 +79,18 @@ export default function SessionDetailPage() {
         setLoading(true);
         setError(null);
 
-        const [sessionData, tagsData] = await Promise.all([
-          getMySession(id),
-          getMyTags(),
-        ]);
-
+        // 1) Session MÅ virke, ellers giver det ingen mening
+        const sessionData = await getMySession(id);
         setSession(sessionData);
-        setTags(tagsData);
+
+        // 2) Tags er nice-to-have – hvis de fejler, viser vi stadig sessionen
+        try {
+          const tagsData = await getMyTags();
+          setTags(tagsData);
+        } catch (err) {
+          console.error("Kunne ikke hente tags:", err);
+          // vi sætter IKKE setError her
+        }
       } catch (err) {
         console.error(err);
         setError("Kunne ikke hente session-data");
@@ -145,13 +151,25 @@ export default function SessionDetailPage() {
       return;
     }
 
+    const needsOutcome = newTagCategory === "OFFENSIVE" || newTagCategory === "DEFENSIVE";
+
+    if (needsOutcome && !newTagOutcome) {
+      setCreateTagError("Outcome (success/fejl) er påkrævet for offensive/defensive tags.");
+      return;
+    }
+
+    const payload = {
+      name: trimmedName,
+      description: newTagDescription.trim() || undefined,
+      category: newTagCategory,
+      ...(needsOutcome && newTagOutcome
+        ? { outcome: newTagOutcome }
+        : {}),
+    };
+
     try {
       setCreatingTag(true);
-      const created = await createMyTag({
-        name: trimmedName,
-        description: newTagDescription.trim() || undefined,
-        category: newTagCategory,
-      });
+      const created = await createMyTag(payload);
 
       // opdater tags-liste + vælg det nye tag
       setTags((prev) => [...prev, created]);
@@ -159,6 +177,7 @@ export default function SessionDetailPage() {
       setNewTagName("");
       setNewTagDescription("");
       setNewTagCategory("TECHNICAL_ERROR");
+      setNewTagOutcome(null);
       setShowNewTagForm(false);
       console.log("Tag created:", created);
     } catch (err) {
@@ -187,7 +206,7 @@ export default function SessionDetailPage() {
         <p className="mb-4 text-red-400">{error ?? "Session ikke fundet"}</p>
         <button
           onClick={() => navigate("/dashboard")}
-          className="text-sky-400 hover:text-sky-300 text-sm underline"
+          className="text-orange-400 hover:text-orange-300 text-sm underline"
         >
           Tilbage til dashboard
         </button>
@@ -207,7 +226,7 @@ export default function SessionDetailPage() {
         <div>
           <button
             onClick={() => navigate("/dashboard")}
-            className="text-xs text-stone-400 hover:text-sky-400 transition-colors"
+            className="text-xs text-stone-400 hover:text-orange-400 transition-colors"
           >
             ← Tilbage til dashboard
           </button>
@@ -243,18 +262,18 @@ export default function SessionDetailPage() {
           </div>
           {/* Tag timeline under video */}
             <div className="mt-3 space-y-1">
-            <div className="flex items-center justify-between text-[11px] text-slate-400">
+            <div className="flex items-center justify-between text-[11px] text-stone-400">
                 <span>
                 Time: {Math.floor(currentTime)}s
                 {duration > 0 && ` / ${Math.floor(duration)}s`}
                 </span>
             </div>
 
-            <div className="relative h-3 rounded-full bg-slate-800 overflow-hidden">
+            <div className="relative h-3 rounded-full bg-stone-800 overflow-hidden">
                 {/* Fyldt progress (hvor du er i videoen) */}
                 {duration > 0 && (
                 <div
-                    className="absolute inset-y-0 left-0 bg-sky-500/40"
+                    className="absolute inset-y-0 left-0 bg-orange-500/40"
                     style={{ width: `${(currentTime / duration) * 100}%` }}
                 />
                 )}
@@ -315,9 +334,9 @@ export default function SessionDetailPage() {
                     const value = e.target.value;
                     setSelectedTagId(value === "" ? "" : Number(value));
                   }}
-                  className="w-full rounded-lg border border-stone-700 bg-stone-950 px-2 py-2 text-xs text-stone-100 focus:outline-none focus:ring-2 focus:ring-sky-500"
+                  className="w-full rounded-lg border border-stone-700 bg-stone-950 px-2 py-2 text-xs text-stone-100 focus:outline-none focus:ring-2 focus:ring-orange-500"
                 >
-                  <option value="">-- Choose Tag --</option>
+                  <option value="">-- Vælg Tag --</option>
                   {tags.map((t) => (
                     <option key={t.id} value={t.id}>
                       [{formatCategory(t.category)}] {t.name}
@@ -325,73 +344,108 @@ export default function SessionDetailPage() {
                     </option>
                   ))}
                 </select>
+
+                {/* toggle opret-nyt-tag */}
                 <button
                   type="button"
                   onClick={() => setShowNewTagForm((prev) => !prev)}
-                  className="text-[11px] text-sky-400 hover:text-sky-300 mt-1"
+                  className="text-[11px] text-orange-400 hover:text-orange-300 mt-1"
                 >
-                  {showNewTagForm ? "Annuller oprettelse af tag" : "Opret nyt tag"}
+                  {showNewTagForm
+                    ? "Annuller oprettelse af tag"
+                    : "Opret nyt tag"}
                 </button>
+
+                {/* Opret nyt tag-boks */}
                 {showNewTagForm && (
-                <div className="mt-2 space-y-2 rounded-lg border border-slate-800 bg-slate-950/80 p-2">
-                  <div>
-                    <label className="block text-[11px] mb-1 text-slate-300">
-                      Kategori
-                    </label>
-                    <select
-                      value={newTagCategory}
-                      onChange={(e) =>
-                        setNewTagCategory(e.target.value as TagCategory)
-                      }
-                      className="w-full rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-[11px] text-slate-100 focus:outline-none focus:ring-1 focus:ring-sky-500"
+                  <div className="mt-2 space-y-2 rounded-lg border border-stone-800 bg-stone-950/80 p-2">
+                    <div>
+                      <label className="block text-[11px] mb-1 text-stone-300">
+                        Kategori
+                      </label>
+                      <select
+                        value={newTagCategory}
+                        onChange={(e) =>
+                          setNewTagCategory(e.target.value as TagCategory)
+                        }
+                        className="w-full rounded-md border border-stone-700 bg-stone-900 px-2 py-1 text-[11px] text-stone-100 focus:outline-none focus:ring-1 focus:ring-orange-500"
+                      >
+                        <option value="TECHNICAL_ERROR">Tekniske fejl</option>
+                        <option value="TECHNICAL_STRENGTH">
+                          Tekniske styrker
+                        </option>
+                        <option value="TACTICAL_DECISION">
+                          Taktiske beslutninger
+                        </option>
+                        <option value="OFFENSIVE">Offensiv succes/fejl</option>
+                        <option value="DEFENSIVE">Defensiv succes/fejl</option>
+                        <option value="PHYSICAL">Fysisk performance</option>
+                        <option value="MENTAL">Mental performance</option>
+                      </select>
+                    </div>
+
+                    {(newTagCategory === "OFFENSIVE" ||
+                      newTagCategory === "DEFENSIVE") && (
+                      <div>
+                        <label className="block text-[11px] mb-1 text-stone-300">
+                          Outcome
+                        </label>
+                        <select
+                          value={newTagOutcome ?? ""}
+                          onChange={(e) => {
+                            const value = e.target.value;
+                            setNewTagOutcome(
+                              value === "" ? null : (value as TagOutcome)
+                            );
+                          }}
+                          className="w-full rounded-md border border-stone-700 bg-stone-900 px-2 py-1 text-[11px] text-stone-100 focus:outline-none focus:ring-1 focus:ring-orange-500"
+                        >
+                          <option value="">-- Vælg --</option>
+                          <option value="SUCCESS">Succes</option>
+                          <option value="FAIL">Fejl</option>
+                        </select>
+                      </div>
+                    )}
+
+                    <div>
+                      <label className="block text-[11px] mb-1 text-stone-300">
+                        Navn
+                      </label>
+                      <input
+                        type="text"
+                        value={newTagName}
+                        onChange={(e) => setNewTagName(e.target.value)}
+                        className="w-full rounded-md border border-stone-700 bg-stone-900 px-2 py-1 text-[11px] text-stone-100 focus:outline-none focus:ring-1 focus:ring-orange-500"
+                        placeholder="Fx: Guard for lav, Perfekt jab, God angle entry"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] mb-1 text-stone-300">
+                        Beskrivelse (valgfrit)
+                      </label>
+                      <textarea
+                        value={newTagDescription}
+                        onChange={(e) => setNewTagDescription(e.target.value)}
+                        rows={2}
+                        className="w-full rounded-md border border-stone-700 bg-stone-900 px-2 py-1 text-[11px] text-stone-100 placeholder:text-stone-500 focus:outline-none focus:ring-1 focus:ring-orange-500"
+                        placeholder="Fx: Dropper rear hand efter combos..."
+                      />
+                    </div>
+                    {createTagError && (
+                      <p className="text-[11px] text-red-400">{createTagError}</p>
+                    )}
+                    <button
+                      type="button"
+                      onClick={handleCreateNewTagClick}
+                      disabled={creatingTag}
+                      className="rounded-md bg-orange-500 px-2 py-1 text-[11px] font-medium text-stone-950 hover:bg-orange-400 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                      <option value="TECHNICAL_ERROR">Tekniske fejl</option>
-                      <option value="TECHNICAL_STRENGTH">Tekniske styrker</option>
-                      <option value="TACTICAL_DECISION">Taktiske beslutninger</option>
-                      <option value="OFFENSIVE">Offensiv succes/fejl</option>
-                      <option value="DEFENSIVE">Defensiv succes/fejl</option>
-                      <option value="PHYSICAL">Fysisk performance</option>
-                      <option value="MENTAL">Mental performance</option>
-                    </select>
+                      {creatingTag ? "Opretter..." : "Gem nyt tag"}
+                    </button>
                   </div>
-                  <div>
-                    <label className="block text-[11px] mb-1 text-slate-300">
-                      Navn
-                    </label>
-                    <input
-                      type="text"
-                      value={newTagName}
-                      onChange={(e) => setNewTagName(e.target.value)}
-                      className="w-full rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-[11px] text-slate-100 focus:outline-none focus:ring-1 focus:ring-sky-500"
-                      placeholder="Fx: Guard for lav, Perfekt jab, God angle entry"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[11px] mb-1 text-slate-300">
-                      Beskrivelse (valgfrit)
-                    </label>
-                    <textarea
-                      value={newTagDescription}
-                      onChange={(e) => setNewTagDescription(e.target.value)}
-                      rows={2}
-                      className="w-full rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-[11px] text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
-                      placeholder="Fx: Dropper rear hand efter combos..."
-                    />
-                  </div>
-                  {createTagError && (
-                    <p className="text-[11px] text-red-400">{createTagError}</p>
-                  )}
-                  <button
-                    type="button"
-                    onClick={handleCreateNewTagClick}
-                    disabled={creatingTag}
-                    className="rounded-md bg-emerald-500 px-2 py-1 text-[11px] font-medium text-slate-950 hover:bg-emerald-400 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {creatingTag ? "Opretter..." : "Gem nyt tag"}
-                  </button>
-                </div>
-              )}
+                )}
               </div>
+
               <div>
                 <label className="block mb-1 text-stone-300">
                   Note (valgfrit)
@@ -400,7 +454,7 @@ export default function SessionDetailPage() {
                   value={tagNote}
                   onChange={(e) => setTagNote(e.target.value)}
                   rows={3}
-                  className="w-full rounded-lg border border-stone-700 bg-stone-950 px-2 py-2 text-xs text-stone-100 placeholder:text-stone-500 focus:outline-none focus:ring-2 focus:ring-sky-500"
+                  className="w-full rounded-lg border border-stone-700 bg-stone-950 px-2 py-2 text-xs text-stone-100 placeholder:text-stone-500 focus:outline-none focus:ring-2 focus:ring-orange-500"
                   placeholder="Fx: Hands down efter combo, står stille på linjen..."
                 />
               </div>
@@ -410,7 +464,7 @@ export default function SessionDetailPage() {
               <button
                 type="submit"
                 disabled={addingTag}
-                className="rounded-lg bg-sky-500 px-3 py-2 text-xs font-medium text-stone-950 hover:bg-sky-400 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                className="rounded-lg bg-orange-500 px-3 py-2 text-xs font-medium text-stone-950 hover:bg-orange-400 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
                 {addingTag
                   ? "Tilføjer tag..."
@@ -437,7 +491,7 @@ export default function SessionDetailPage() {
                   >
                     <div>
                       <p className="font-semibold text-stone-100">
-                        {st.tag.name}
+                        [{st.tag.category ?? "NULL"}] {st.tag.name}
                       </p>
                       <p className="text-stone-400">
                         Time:{" "}
