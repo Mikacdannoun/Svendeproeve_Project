@@ -16,24 +16,3 @@ packages/
     shared-types -> shared TS types
 prisma/ -> Prisma schema + migrations
 
-## Setup
-More documentation to come
-
-
-## GIT
-git status - se hvad der er ændret
-
-# mandag morgen
-git checkout main
-git pull
-
-# færdig efter en dag
-git add .
-git commit -m "Dato + hva du har lavet"
-git push
-
-# hvis der er konflikter -> løs dem ->
-git add .
-git commit -m "Merge conflict resolved"
-
-
